@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Smart Environment Monitoring System</title>
+<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/style.css') }}">
+<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+</head>
+<body>
+<header>
+<h1>Smart Environment Monitoring System</h1>
+</header>
+<div class="container">
+<section id="sensor-data">
+<h2>Current Sensor Data</h2>
+<p>Timestamp: <span id="timestamp"></span></p>
+<p>Temperature: <span id="temperature"></span> °C <span id="temp-warning" class="warning"></span></p>
+<p>Humidity: <span id="humidity"></span> % <span id="hum-warning" class="warning"></span></p>
+<p>Pressure: <span id="pressure"></span> hPa <span id="pres-warning" class="warning"></span></p>
+</section>
+<section id="thresholds">
+<h2>Threshold Settings</h2>
+<form id="thresholdForm">
+<label>Temperature Min: <input type="number" step="0.1" name="temperature_min" value="{{ thresholds['temperature_min'] }}"></label><br>
+<label>Temperature Max: <input type="number" step="0.1" name="temperature_max" value="{{ thresholds['temperature_max'] }}"></label><br>
+<label>Humidity Min: <input type="number" step="0.1" name="humidity_min" value="{{ thresholds['humidity_min'] }}"></label><br>
+<label>Humidity Max: <input type="number" step="0.1" name="humidity_max" value="{{ thresholds['humidity_max'] }}"></label><br>
+<label>Pressure Min: <input type="number" step="0.1" name="pressure_min" value="{{ thresholds['pressure_min'] }}"></label><br>
+<label>Pressure Max: <input type="number" step="0.1" name="pressure_max" value="{{ thresholds['pressure_max'] }}"></label><br>
+<button type="submit">Update Thresholds</button>
+</form>
+</section>
+<section id="chart-container">
+<h2>Historical Temperature Data</h2>
+<canvas id="tempChart" width="400" height="200"></canvas>
+<p id="prediction"></p>
+</section>
+</div>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
