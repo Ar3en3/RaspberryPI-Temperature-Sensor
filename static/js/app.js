@@ -33,7 +33,7 @@ if (data.length < 2) {
 console.warn("Not enough data to render chart.");
 return;
 }
-let timestamps = data.map(record => new Date(record.timestamp + "Z"));
+let timestamps = data.map(record => new Date(record.timestamp));
 let temperatures = data.map(record => record.temperature);
 let xValues = timestamps.map(date => date.getTime());
 let n = xValues.length;
