@@ -1,0 +1,1214 @@
+commit 38775b97d0e73a412ab02832b9abab16955d891a
+Author: Amaz Salman <amazsalman2@gmail.com>
+Date:   Mon Apr 7 18:13:03 2025 +1200
+
+    update
+
+diff --git a/analysis.py b/analysis.py
+new file mode 100644
+index 0000000..de63f0f
+--- /dev/null
++++ b/analysis.py
+@@ -0,0 +1,44 @@
++import sqlite3
++import datetime
++import matplotlib.pyplot as plt
++import numpy as np
++import matplotlib.dates as mdates
++
++def get_readings(limit=50):
++
++    conn = sqlite3.connect('environment.db')
++    cursor = conn.cursor()
++    cursor.execute("SELECT timestamp, temperature FROM readings ORDER BY timestamp ASC LIMIT ?", (limit,))
++    rows = cursor.fetchall()
++    conn.close()
++    return rows
++
++def plot_historical_temperature():
++    data = get_readings(50)
++    if not data:
++        print("No data found in the database.")
++        return
++
++    timestamps = [datetime.datetime.fromisoformat(row[0]) for row in data]
++    temperatures = [row[1] for row in data]
++
++    times_numeric = mdates.date2num(timestamps)
++
++    m, b = np.polyfit(times_numeric, temperatures, 1)
++    regression_line = m * np.array(times_numeric) + b
++
++    plt.figure(figsize=(10, 5))
++    plt.plot(timestamps, temperatures, 'bo-', label='Temperature')
++
++    plt.plot(timestamps, regression_line, 'r--', label='Trend Line')
++
++    plt.gcf().autofmt_xdate()
++    plt.xlabel('Time')
++    plt.ylabel('Temperature (°C)')
++    plt.title('Historical Temperature Data with Linear Trend')
++    plt.legend()
++
++    plt.show()
++
++if __name__ == "__main__":
++    plot_historical_temperature()
+diff --git a/app.py b/app.py
+index 7341b04..c1dc0f2 100644
+--- a/app.py
++++ b/app.py
+@@ -2,30 +2,52 @@ import os
+ import sqlite3
+ import threading
+ import time
+-import logging
+ from flask import Flask, render_template, jsonify, request
+ from flask_socketio import SocketIO
+ from flask_wtf.csrf import CSRFProtect
+ from flask_talisman import Talisman
+-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
++
+ app = Flask(__name__)
+ app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "your_secret_key")
++
+ csrf = CSRFProtect(app)
++
+ Talisman(app, content_security_policy=None)
++
+ socketio = SocketIO(app)
+-thresholds = {'temperature_min': 0.0, 'temperature_max': 40.0, 'humidity_min': 10.0, 'humidity_max': 90.0, 'pressure_min': 970.0, 'pressure_max': 1030.0}
++
++thresholds = {
++    'temperature_min': 0.0,
++    'temperature_max': 40.0,
++    'humidity_min': 10.0,
++    'humidity_max': 90.0,
++    'pressure_min': 970.0,
++    'pressure_max': 1030.0
++}
++
+ def initialize_database():
++    """Ensure the 'readings' table exists in environment.db."""
+     try:
+         conn = sqlite3.connect('environment.db')
+         c = conn.cursor()
+-        c.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME, temperature REAL, humidity REAL, pressure REAL)")
++        c.execute('''
++            CREATE TABLE IF NOT EXISTS readings (
++                id INTEGER PRIMARY KEY AUTOINCREMENT,
++                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
++                temperature REAL,
++                humidity REAL,
++                pressure REAL
++            )
++        ''')
+         conn.commit()
+         conn.close()
+-        logging.info("Database initialized.")
+     except Exception as e:
+-        logging.error("Database init error: %s", e)
++        print("Error initializing database:", e)
++
+ initialize_database()
++
+ def get_latest_reading():
++    """Retrieve the latest sensor reading from environment.db."""
+     try:
+         conn = sqlite3.connect('environment.db')
+         c = conn.cursor()
+@@ -33,43 +55,47 @@ def get_latest_reading():
+         row = c.fetchone()
+         conn.close()
+         if row:
+-            return {'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]}
++            return {
++                'timestamp': row[0],
++                'temperature': row[1],
++                'humidity': row[2],
++                'pressure': row[3]
++            }
+         else:
+             return None
+     except Exception as e:
+-        logging.error("Error retrieving latest reading: %s", e)
++        print("Error retrieving latest reading:", e)
+         return None
++
+ def background_thread():
++    """Background thread that emits sensor_update events via Socket.IO every 5 seconds."""
+     while True:
+-        try:
+-            reading = get_latest_reading()
+-            if reading:
+-                warnings = {}
+-                if reading['temperature'] < thresholds['temperature_min'] or reading['temperature'] > thresholds['temperature_max']:
+-                    warnings['temperature'] = True
+-                if reading['humidity'] < thresholds['humidity_min'] or reading['humidity'] > thresholds['humidity_max']:
+-                    warnings['humidity'] = True
+-                if reading['pressure'] < thresholds['pressure_min'] or reading['pressure'] > thresholds['pressure_max']:
+-                    warnings['pressure'] = True
+-                reading['warnings'] = warnings
+-                socketio.emit('sensor_update', reading)
+-            else:
+-                logging.warning("No latest reading.")
+-        except Exception as e:
+-            logging.error("Error in background thread: %s", e)
++        reading = get_latest_reading()
++        if reading:
++            warnings = {}
++            if reading['temperature'] < thresholds['temperature_min'] or reading['temperature'] > thresholds['temperature_max']:
++                warnings['temperature'] = True
++            if reading['humidity'] < thresholds['humidity_min'] or reading['humidity'] > thresholds['humidity_max']:
++                warnings['humidity'] = True
++            if reading['pressure'] < thresholds['pressure_min'] or reading['pressure'] > thresholds['pressure_max']:
++                warnings['pressure'] = True
++            reading['warnings'] = warnings
++
++            socketio.emit('sensor_update', reading)
+         time.sleep(5)
++
+ thread = threading.Thread(target=background_thread)
+ thread.daemon = True
+ thread.start()
++
+ @app.route('/')
+ def index():
+-    try:
+-        return render_template('index.html', thresholds=thresholds)
+-    except Exception as e:
+-        logging.error("Error rendering index: %s", e)
+-        return "Error rendering page", 500
++    """Render the main dashboard."""
++    return render_template('index.html', thresholds=thresholds)
++
+ @app.route('/history')
+ def history():
++    """Retrieve the 50 most recent sensor readings as JSON."""
+     try:
+         conn = sqlite3.connect('environment.db')
+         c = conn.cursor()
+@@ -78,29 +104,31 @@ def history():
+         conn.close()
+         data = []
+         for row in reversed(rows):
+-            data.append({'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]})
++            data.append({
++                'timestamp': row[0],
++                'temperature': row[1],
++                'humidity': row[2],
++                'pressure': row[3]
++            })
+         return jsonify(data)
+     except Exception as e:
+-        logging.error("Error retrieving history: %s", e)
++        print("Error retrieving historical data:", e)
+         return jsonify([])
++
+ @app.route('/update_thresholds', methods=['POST'])
+-@csrf.exempt
++@csrf.exempt  
+ def update_thresholds():
++    """Update sensor threshold settings."""
+     global thresholds
+-    try:
+-        data = request.get_json()
+-        if not data:
+-            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
+-        for key in thresholds:
+-            if key in data:
++    data = request.get_json()
++    for key in thresholds:
++        if key in data:
++            try:
+                 thresholds[key] = float(data[key])
+-        logging.info("Thresholds updated: %s", thresholds)
+-        return jsonify({'status': 'success', 'thresholds': thresholds})
+-    except Exception as e:
+-        logging.error("Error updating thresholds: %s", e)
+-        return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
++            except ValueError:
++                return jsonify({'status': 'error', 'message': 'Invalid value for ' + key}), 400
++    return jsonify({'status': 'success', 'thresholds': thresholds})
++
+ if __name__ == '__main__':
+-    try:
+-        socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+-    except Exception as e:
+-        logging.critical("Failed to start server: %s", e)
++    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
++
+diff --git a/sensor_read.py b/sensor_read.py
+index 7b01ff8..de48e01 100644
+--- a/sensor_read.py
++++ b/sensor_read.py
+@@ -1,49 +1,74 @@
+ import sqlite3
+ import datetime
+ import time
+-import random
+-from sense_emu import SenseHat
++from sense_emu import SenseHat  
++
+ sense = SenseHat()
++
+ conn = sqlite3.connect('environment.db', check_same_thread=False)
+ cursor = conn.cursor()
+-cursor.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME, temperature REAL, humidity REAL, pressure REAL)")
++
++cursor.execute('''
++CREATE TABLE IF NOT EXISTS readings (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
++    temperature REAL,
++    humidity REAL,
++    pressure REAL
++)
++''')
+ conn.commit()
++
+ def read_sensor():
++    """
++    Reads sensor data from the Sense HAT (or emulator).
++    Falls back to default values if sensor reading fails.
++    Returns a tuple of (temperature, humidity, pressure).
++    """
+     try:
+         temperature = sense.get_temperature()
+-    except:
+-        temperature = 25.0 + random.uniform(-3,3)
++    except Exception as e:
++        print("Temperature error:", e)
++        temperature = 25.0  
++
+     try:
+         humidity = sense.get_humidity()
+-    except:
+-        humidity = 50.0 + random.uniform(-5,5)
++    except Exception as e:
++        print("Humidity error:", e)
++        humidity = 50.0  
++
+     try:
+         pressure = sense.get_pressure()
+-    except:
+-        pressure = 1013.25 + random.uniform(-10,10)
++    except Exception as e:
++        print("Pressure error:", e)
++        pressure = 1013.25  
++
+     return temperature, humidity, pressure
+-def update_led(temperature):
+-    if temperature > 30:
+-        color = (255,0,0)
+-    elif temperature < 20:
+-        color = (0,0,255)
+-    else:
+-        color = (0,255,0)
+-    pixels = [color]*64
+-    sense.set_pixels(pixels)
++
+ def log_reading():
++    """
++    Reads sensor data and stores the values in the 'readings' table.
++    """
+     temperature, humidity, pressure = read_sensor()
+-    update_led(temperature)
+-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+-    cursor.execute("INSERT INTO readings (timestamp, temperature, humidity, pressure) VALUES (?, ?, ?, ?)", (timestamp, temperature, humidity, pressure))
++  
++    cursor.execute(
++        "INSERT INTO readings (temperature, humidity, pressure) VALUES (?, ?, ?)",
++        (temperature, humidity, pressure)
++    )
+     conn.commit()
+-    print(timestamp, temperature, humidity, pressure)
++    print("Logged reading at", datetime.datetime.now(),
++          "- Temperature:", temperature,
++          "Humidity:", humidity,
++          "Pressure:", pressure)
++
+ if __name__ == "__main__":
++    print("Starting sensor logging. Press Ctrl+C to stop.")
+     try:
+         while True:
+             log_reading()
+-            time.sleep(5)
++            time.sleep(5)  
+     except KeyboardInterrupt:
+-        print("Exiting")
++        print("Stopping sensor logging.")
+     finally:
+         conn.close()
++
+diff --git a/static/css/style.css b/static/css/style.css
+index 7dcda4a..374940e 100644
+--- a/static/css/style.css
++++ b/static/css/style.css
+@@ -1,28 +1,72 @@
++
+ body {
+-font-family: Arial, sans-serif;
+-background-color: #f5f5f5;
+-margin: 0;
+-padding: 0;
++    font-family: 'Arial', sans-serif;
++    margin: 0;
++    padding: 0;
++    background-color: #f5f5f5;
++    color: #333;
+ }
++
+ header {
+-background-color: #007bff;
+-color: #fff;
+-padding: 20px;
+-text-align: center;
++    background-color: #007bff;
++    color: #fff;
++    padding: 20px;
++    text-align: center;
+ }
++
+ .container {
+-width: 90%;
+-max-width: 1200px;
+-margin: 20px auto;
+-background-color: #fff;
+-padding: 20px;
+-border-radius: 8px;
+-box-shadow: 0 0 10px rgba(0,0,0,0.1);
++    width: 90%;
++    max-width: 1200px;
++    margin: 20px auto;
++    padding: 20px;
++    background-color: #fff;
++    border-radius: 8px;
++    box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
+ }
+-section {
+-margin-bottom: 20px;
++
++h1, h2 {
++    text-align: center;
+ }
++
++#sensor-data, #thresholds, #chart-container {
++    margin-bottom: 20px;
++}
++
+ .warning {
+-color: red;
+-font-weight: bold;
++    color: red;
++    font-weight: bold;
++}
++
++form label {
++    display: block;
++    margin: 8px 0 4px;
++}
++
++form input[type="number"] {
++    width: 100%;
++    padding: 8px;
++    margin-bottom: 10px;
++    border: 1px solid #ccc;
++    border-radius: 4px;
++}
++
++form button {
++    background-color: #007bff;
++    color: #fff;
++    border: none;
++    padding: 10px 15px;
++    border-radius: 4px;
++    cursor: pointer;
++}
++
++form button:hover {
++    background-color: #0056b3;
++}
++
++@media (max-width: 768px) {
++    .container {
++        width: 95%;
++    }
++}
++
+ }
+diff --git a/static/js/app.js b/static/js/app.js
+index f23ba48..a124005 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -1,86 +1,115 @@
+ var socket = io();
+ socket.on('sensor_update', function(data) {
+-document.getElementById('timestamp').innerText = data.timestamp;
+-document.getElementById('temperature').innerText = parseFloat(data.temperature).toFixed(2);
+-document.getElementById('humidity').innerText = parseFloat(data.humidity).toFixed(2);
+-document.getElementById('pressure').innerText = parseFloat(data.pressure).toFixed(2);
+-document.getElementById('temp-warning').innerText = (data.warnings && data.warnings.temperature) ? "Warning!" : "";
+-document.getElementById('hum-warning').innerText = (data.warnings && data.warnings.humidity) ? "Warning!" : "";
+-document.getElementById('pres-warning').innerText = (data.warnings && data.warnings.pressure) ? "Warning!" : "";
++    document.getElementById('timestamp').innerText = data.timestamp;
++    document.getElementById('temperature').innerText = parseFloat(data.temperature).toFixed(2);
++    document.getElementById('humidity').innerText = parseFloat(data.humidity).toFixed(2);
++    document.getElementById('pressure').innerText = parseFloat(data.pressure).toFixed(2);
++
++    document.getElementById('temp-warning').innerText = (data.warnings && data.warnings.temperature) ? "Warning!" : "";
++    document.getElementById('hum-warning').innerText = (data.warnings && data.warnings.humidity) ? "Warning!" : "";
++    document.getElementById('pres-warning').innerText = (data.warnings && data.warnings.pressure) ? "Warning!" : "";
+ });
++
+ document.getElementById('thresholdForm').addEventListener('submit', function(e) {
+-e.preventDefault();
+-var formData = new FormData(e.target);
+-var thresholds = {};
+-formData.forEach(function(value, key) {
+-thresholds[key] = value;
+-});
+-fetch('/update_thresholds', {
+-method: 'POST',
+-headers: { 'Content-Type': 'application/json' },
+-body: JSON.stringify(thresholds)
+-})
+-.then(response => response.json())
+-.then(data => alert("Thresholds updated successfully!"))
+-.catch(error => console.error('Error updating thresholds:', error));
++    e.preventDefault();
++    var formData = new FormData(e.target);
++    var thresholds = {};
++    formData.forEach(function(value, key) {
++        thresholds[key] = value;
++    });
++    fetch('/update_thresholds', {
++        method: 'POST',
++        headers: { 'Content-Type': 'application/json' },
++        body: JSON.stringify(thresholds)
++    })
++    .then(response => response.json())
++    .then(data => alert("Thresholds updated successfully!"))
++    .catch(error => console.error('Error updating thresholds:', error));
+ });
++
+ var tempChart = null;
++
+ function fetchHistoricalDataAndUpdateChart() {
+-fetch('/history')
+-.then(response => response.json())
+-.then(data => {
+-if (data.length < 2) {
+-console.warn("Not enough data to render chart.");
+-return;
+-}
+-let timestamps = data.map(record => new Date(record.timestamp));
+-let temperatures = data.map(record => record.temperature);
+-let xValues = timestamps.map(date => date.getTime());
+-let n = xValues.length;
+-let sumX = xValues.reduce((acc, val) => acc + val, 0);
+-let sumY = temperatures.reduce((acc, val) => acc + val, 0);
+-let sumXY = 0, sumXX = 0;
+-for (let i = 0; i < n; i++) {
+-sumXY += xValues[i] * temperatures[i];
+-sumXX += xValues[i] * xValues[i];
+-}
+-let m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+-let b = (sumY - m * sumX) / n;
+-let regressionData = xValues.map(x => m * x + b);
+-let labels = timestamps.map(date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+-var ctx = document.getElementById('tempChart').getContext('2d');
+-if (!tempChart) {
+-tempChart = new Chart(ctx, {
+-type: 'line',
+-data: {
+-labels: labels,
+-datasets: [
+-{ label: 'Temperature (°C)', data: temperatures, borderColor: 'blue', backgroundColor: 'rgba(0,0,255,0.1)', fill: false, tension: 0.1 },
+-{ label: 'Trend Line', data: regressionData, borderColor: 'red', backgroundColor: 'rgba(255,0,0,0.1)', fill: false, borderDash: [5,5], tension: 0.1 }
+-]
+-},
+-options: { responsive: true, scales: { x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }}, title: { display: true, text: 'Time' }}, y: { beginAtZero: false, title: { display: true, text: 'Temperature (°C)' }}}}
+-});
+-} else {
+-tempChart.data.labels = labels;
+-tempChart.data.datasets[0].data = temperatures;
+-tempChart.data.datasets[1].data = regressionData;
+-tempChart.update();
+-}
+-let threshold = parseFloat(document.querySelector('input[name="temperature_max"]').value);
+-let lastTemp = temperatures[temperatures.length - 1];
+-let predictedDate = null;
+-if (m > 0 && lastTemp < threshold) {
+-let predictedNumeric = (threshold - b) / m;
+-predictedDate = new Date(predictedNumeric);
+-}
+-if (predictedDate) {
+-document.getElementById('prediction').innerText = "Predicted time to exceed " + threshold + "°C: " + predictedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+-} else {
+-document.getElementById('prediction').innerText = "";
+-}
+-})
+-.catch(error => console.error("Error fetching historical data:", error));
++    fetch('/history')
++    .then(response => response.json())
++    .then(data => {
++        if (data.length === 0) {
++            console.error("No historical data available.");
++            return;
++        }
++        let timestamps = data.map(record => new Date(record.timestamp));
++        let temperatures = data.map(record => record.temperature);
++
++        let xValues = timestamps.map(date => date.getTime());
++        let n = xValues.length;
++        let sumX = xValues.reduce((acc, val) => acc + val, 0);
++        let sumY = temperatures.reduce((acc, val) => acc + val, 0);
++        let sumXY = 0, sumXX = 0;
++        for (let i = 0; i < n; i++) {
++            sumXY += xValues[i] * temperatures[i];
++            sumXX += xValues[i] * xValues[i];
++        }
++        let m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
++        let b = (sumY - m * sumX) / n;
++        let regressionData = xValues.map(x => m * x + b);
++
++        let labels = timestamps.map(date => date.toISOString());
++
++        if (!tempChart) {
++            var ctx = document.getElementById('tempChart').getContext('2d');
++            tempChart = new Chart(ctx, {
++                type: 'line',
++                data: {
++                    labels: labels,
++                    datasets: [
++                        {
++                            label: 'Temperature (°C)',
++                            data: temperatures,
++                            borderColor: 'blue',
++                            backgroundColor: 'rgba(0, 0, 255, 0.1)',
++                            fill: false,
++                            tension: 0.1
++                        },
++                        {
++                            label: 'Trend Line',
++                            data: regressionData,
++                            borderColor: 'red',
++                            backgroundColor: 'rgba(255, 0, 0, 0.1)',
++                            fill: false,
++                            borderDash: [5, 5],
++                            tension: 0.1
++                        }
++                    ]
++                },
++                options: {
++                    responsive: true,
++                    scales: {
++                        x: {
++                            type: 'time',
++                            time: {
++                                unit: 'minute',
++                                displayFormats: { minute: 'HH:mm' }
++                            },
++                            title: { display: true, text: 'Time' }
++                        },
++                        y: {
++                            beginAtZero: false,
++                            title: { display: true, text: 'Temperature (°C)' }
++                        }
++                    }
++                }
++            });
++        } else {
++            tempChart.data.labels = labels;
++            tempChart.data.datasets[0].data = temperatures;
++            tempChart.data.datasets[1].data = regressionData;
++            tempChart.update();
++        }
++    })
++    .catch(error => console.error('Error fetching historical data:', error));
+ }
++
+ fetchHistoricalDataAndUpdateChart();
++
+ setInterval(fetchHistoricalDataAndUpdateChart, 10000);
++
+diff --git a/templates/index.html b/templates/index.html
+index 511cd6e..b52b52f 100644
+--- a/templates/index.html
++++ b/templates/index.html
+@@ -1,43 +1,48 @@
+ <!DOCTYPE html>
+ <html>
+ <head>
+-<meta charset="UTF-8">
+-<title>Smart Environment Monitoring System</title>
+-<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/style.css') }}">
+-<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
++  <meta charset="UTF-8">
++  <title>Smart Environment Monitoring System</title>
++  <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/style.css') }}">
++  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
++  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
++  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+ </head>
+ <body>
+-<header>
+-<h1>Smart Environment Monitoring System</h1>
+-</header>
+-<div class="container">
+-<section id="sensor-data">
+-<h2>Current Sensor Data</h2>
+-<p>Timestamp: <span id="timestamp"></span></p>
+-<p>Temperature: <span id="temperature"></span> °C <span id="temp-warning" class="warning"></span></p>
+-<p>Humidity: <span id="humidity"></span> % <span id="hum-warning" class="warning"></span></p>
+-<p>Pressure: <span id="pressure"></span> hPa <span id="pres-warning" class="warning"></span></p>
+-</section>
+-<section id="thresholds">
+-<h2>Threshold Settings</h2>
+-<form id="thresholdForm">
+-<label>Temperature Min: <input type="number" step="0.1" name="temperature_min" value="{{ thresholds['temperature_min'] }}"></label><br>
+-<label>Temperature Max: <input type="number" step="0.1" name="temperature_max" value="{{ thresholds['temperature_max'] }}"></label><br>
+-<label>Humidity Min: <input type="number" step="0.1" name="humidity_min" value="{{ thresholds['humidity_min'] }}"></label><br>
+-<label>Humidity Max: <input type="number" step="0.1" name="humidity_max" value="{{ thresholds['humidity_max'] }}"></label><br>
+-<label>Pressure Min: <input type="number" step="0.1" name="pressure_min" value="{{ thresholds['pressure_min'] }}"></label><br>
+-<label>Pressure Max: <input type="number" step="0.1" name="pressure_max" value="{{ thresholds['pressure_max'] }}"></label><br>
+-<button type="submit">Update Thresholds</button>
+-</form>
+-</section>
+-<section id="chart-container">
+-<h2>Historical Temperature Data</h2>
+-<canvas id="tempChart" width="400" height="200"></canvas>
+-<p id="prediction"></p>
+-</section>
+-</div>
+-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
++  <header>
++    <h1>Smart Environment Monitoring System</h1>
++  </header>
++
++  <div class="container">
++    <section id="sensor-data">
++      <h2>Current Sensor Data</h2>
++      <p>Timestamp: <span id="timestamp"></span></p>
++      <p>Temperature: <span id="temperature"></span> °C <span id="temp-warning" class="warning"></span></p>
++      <p>Humidity: <span id="humidity"></span> % <span id="hum-warning" class="warning"></span></p>
++      <p>Pressure: <span id="pressure"></span> hPa <span id="pres-warning" class="warning"></span></p>
++    </section>
++
++    <section id="thresholds">
++      <h2>Threshold Settings</h2>
++      <form id="thresholdForm">
++        <label>Temperature Min: <input type="number" step="0.1" name="temperature_min" value="{{ thresholds['temperature_min'] }}"></label><br>
++        <label>Temperature Max: <input type="number" step="0.1" name="temperature_max" value="{{ thresholds['temperature_max'] }}"></label><br>
++        <label>Humidity Min: <input type="number" step="0.1" name="humidity_min" value="{{ thresholds['humidity_min'] }}"></label><br>
++        <label>Humidity Max: <input type="number" step="0.1" name="humidity_max" value="{{ thresholds['humidity_max'] }}"></label><br>
++        <label>Pressure Min: <input type="number" step="0.1" name="pressure_min" value="{{ thresholds['pressure_min'] }}"></label><br>
++        <label>Pressure Max: <input type="number" step="0.1" name="pressure_max" value="{{ thresholds['pressure_max'] }}"></label><br>
++        <button type="submit">Update Thresholds</button>
++      </form>
++    </section>
++
++    <section id="chart-container">
++      <h2>Historical Temperature Data</h2>
++      <canvas id="tempChart" width="400" height="200"></canvas>
++    </section>
++  </div>
++
++  <!-- Custom JavaScript -->
++  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+ </body>
+ </html>
++
+
+commit cd50919f514eb2992d14796f85091f3223180418
+Author: Amaz Salman <amazsalman2@gmail.com>
+Date:   Mon Apr 7 07:31:30 2025 +1200
+
+    Update
+
+diff --git a/app.py b/app.py
+index 79054e6..7341b04 100644
+--- a/app.py
++++ b/app.py
+@@ -1,52 +1,106 @@
+-from flask import Flask, render_template, jsonify, request
+-from flask_socketio import SocketIO
++import os
+ import sqlite3
+ import threading
+ import time
++import logging
++from flask import Flask, render_template, jsonify, request
++from flask_socketio import SocketIO
++from flask_wtf.csrf import CSRFProtect
++from flask_talisman import Talisman
++logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+ app = Flask(__name__)
+-app.config['SECRET_KEY'] = 'your_secret_key'
++app.config['SECRET_KEY'] = os.environ.get("SECRET_KEY", "your_secret_key")
++csrf = CSRFProtect(app)
++Talisman(app, content_security_policy=None)
+ socketio = SocketIO(app)
+ thresholds = {'temperature_min': 0.0, 'temperature_max': 40.0, 'humidity_min': 10.0, 'humidity_max': 90.0, 'pressure_min': 970.0, 'pressure_max': 1030.0}
++def initialize_database():
++    try:
++        conn = sqlite3.connect('environment.db')
++        c = conn.cursor()
++        c.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME, temperature REAL, humidity REAL, pressure REAL)")
++        conn.commit()
++        conn.close()
++        logging.info("Database initialized.")
++    except Exception as e:
++        logging.error("Database init error: %s", e)
++initialize_database()
+ def get_latest_reading():
+-    conn = sqlite3.connect('environment.db')
+-    c = conn.cursor()
+-    c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 1")
+-    row = c.fetchone()
+-    conn.close()
+-    if row:
+-        return {'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]}
+-    else:
++    try:
++        conn = sqlite3.connect('environment.db')
++        c = conn.cursor()
++        c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 1")
++        row = c.fetchone()
++        conn.close()
++        if row:
++            return {'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]}
++        else:
++            return None
++    except Exception as e:
++        logging.error("Error retrieving latest reading: %s", e)
+         return None
+ def background_thread():
+     while True:
+-        reading = get_latest_reading()
+-        if reading:
+-            socketio.emit('sensor_update', reading)
++        try:
++            reading = get_latest_reading()
++            if reading:
++                warnings = {}
++                if reading['temperature'] < thresholds['temperature_min'] or reading['temperature'] > thresholds['temperature_max']:
++                    warnings['temperature'] = True
++                if reading['humidity'] < thresholds['humidity_min'] or reading['humidity'] > thresholds['humidity_max']:
++                    warnings['humidity'] = True
++                if reading['pressure'] < thresholds['pressure_min'] or reading['pressure'] > thresholds['pressure_max']:
++                    warnings['pressure'] = True
++                reading['warnings'] = warnings
++                socketio.emit('sensor_update', reading)
++            else:
++                logging.warning("No latest reading.")
++        except Exception as e:
++            logging.error("Error in background thread: %s", e)
+         time.sleep(5)
+ thread = threading.Thread(target=background_thread)
+ thread.daemon = True
+ thread.start()
+ @app.route('/')
+ def index():
+-    return render_template('index.html', thresholds=thresholds)
++    try:
++        return render_template('index.html', thresholds=thresholds)
++    except Exception as e:
++        logging.error("Error rendering index: %s", e)
++        return "Error rendering page", 500
+ @app.route('/history')
+ def history():
+-    conn = sqlite3.connect('environment.db')
+-    c = conn.cursor()
+-    c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 50")
+-    rows = c.fetchall()
+-    conn.close()
+-    data = []
+-    for row in reversed(rows):
+-        data.append({'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]})
+-    return jsonify(data)
++    try:
++        conn = sqlite3.connect('environment.db')
++        c = conn.cursor()
++        c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 50")
++        rows = c.fetchall()
++        conn.close()
++        data = []
++        for row in reversed(rows):
++            data.append({'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]})
++        return jsonify(data)
++    except Exception as e:
++        logging.error("Error retrieving history: %s", e)
++        return jsonify([])
+ @app.route('/update_thresholds', methods=['POST'])
++@csrf.exempt
+ def update_thresholds():
+     global thresholds
+-    data = request.get_json()
+-    for key in thresholds:
+-        if key in data:
+-            thresholds[key] = float(data[key])
+-    return jsonify({'status': 'success', 'thresholds': thresholds})
++    try:
++        data = request.get_json()
++        if not data:
++            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
++        for key in thresholds:
++            if key in data:
++                thresholds[key] = float(data[key])
++        logging.info("Thresholds updated: %s", thresholds)
++        return jsonify({'status': 'success', 'thresholds': thresholds})
++    except Exception as e:
++        logging.error("Error updating thresholds: %s", e)
++        return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
+ if __name__ == '__main__':
+-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
++    try:
++        socketio.run(app, host='0.0.0.0', port=5000, debug=True)
++    except Exception as e:
++        logging.critical("Failed to start server: %s", e)
+diff --git a/sensor_read.py b/sensor_read.py
+index dcd1545..7b01ff8 100644
+--- a/sensor_read.py
++++ b/sensor_read.py
+@@ -1,21 +1,49 @@
+ import sqlite3
+ import datetime
+ import time
++import random
+ from sense_emu import SenseHat
+ sense = SenseHat()
+ conn = sqlite3.connect('environment.db', check_same_thread=False)
+ cursor = conn.cursor()
+-cursor.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, temperature REAL, humidity REAL, pressure REAL)")
++cursor.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME, temperature REAL, humidity REAL, pressure REAL)")
+ conn.commit()
+ def read_sensor():
+-    temperature = sense.get_temperature()
+-    humidity = sense.get_humidity()
+-    pressure = sense.get_pressure()
++    try:
++        temperature = sense.get_temperature()
++    except:
++        temperature = 25.0 + random.uniform(-3,3)
++    try:
++        humidity = sense.get_humidity()
++    except:
++        humidity = 50.0 + random.uniform(-5,5)
++    try:
++        pressure = sense.get_pressure()
++    except:
++        pressure = 1013.25 + random.uniform(-10,10)
+     return temperature, humidity, pressure
++def update_led(temperature):
++    if temperature > 30:
++        color = (255,0,0)
++    elif temperature < 20:
++        color = (0,0,255)
++    else:
++        color = (0,255,0)
++    pixels = [color]*64
++    sense.set_pixels(pixels)
+ def log_reading():
+     temperature, humidity, pressure = read_sensor()
+-    cursor.execute("INSERT INTO readings (temperature, humidity, pressure) VALUES (?, ?, ?)", (temperature, humidity, pressure))
++    update_led(temperature)
++    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++    cursor.execute("INSERT INTO readings (timestamp, temperature, humidity, pressure) VALUES (?, ?, ?, ?)", (timestamp, temperature, humidity, pressure))
+     conn.commit()
+-while True:
+-    log_reading()
+-    time.sleep(5)
++    print(timestamp, temperature, humidity, pressure)
++if __name__ == "__main__":
++    try:
++        while True:
++            log_reading()
++            time.sleep(5)
++    except KeyboardInterrupt:
++        print("Exiting")
++    finally:
++        conn.close()
+diff --git a/static/js/app.js b/static/js/app.js
+index b6d446d..f23ba48 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -33,7 +33,7 @@ if (data.length < 2) {
+ console.warn("Not enough data to render chart.");
+ return;
+ }
+-let timestamps = data.map(record => new Date(record.timestamp + "Z"));
++let timestamps = data.map(record => new Date(record.timestamp));
+ let temperatures = data.map(record => record.temperature);
+ let xValues = timestamps.map(date => date.getTime());
+ let n = xValues.length;
+
+commit c869d62ef1dcd48b9f96d5cf50a72460e5f11ee3
+Author: Amaz Salman <amazsalman2@gmail.com>
+Date:   Mon Apr 7 03:16:26 2025 +1200
+
+    first attempt
+
+diff --git a/app.py b/app.py
+new file mode 100644
+index 0000000..79054e6
+--- /dev/null
++++ b/app.py
+@@ -0,0 +1,52 @@
++from flask import Flask, render_template, jsonify, request
++from flask_socketio import SocketIO
++import sqlite3
++import threading
++import time
++app = Flask(__name__)
++app.config['SECRET_KEY'] = 'your_secret_key'
++socketio = SocketIO(app)
++thresholds = {'temperature_min': 0.0, 'temperature_max': 40.0, 'humidity_min': 10.0, 'humidity_max': 90.0, 'pressure_min': 970.0, 'pressure_max': 1030.0}
++def get_latest_reading():
++    conn = sqlite3.connect('environment.db')
++    c = conn.cursor()
++    c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 1")
++    row = c.fetchone()
++    conn.close()
++    if row:
++        return {'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]}
++    else:
++        return None
++def background_thread():
++    while True:
++        reading = get_latest_reading()
++        if reading:
++            socketio.emit('sensor_update', reading)
++        time.sleep(5)
++thread = threading.Thread(target=background_thread)
++thread.daemon = True
++thread.start()
++@app.route('/')
++def index():
++    return render_template('index.html', thresholds=thresholds)
++@app.route('/history')
++def history():
++    conn = sqlite3.connect('environment.db')
++    c = conn.cursor()
++    c.execute("SELECT timestamp, temperature, humidity, pressure FROM readings ORDER BY id DESC LIMIT 50")
++    rows = c.fetchall()
++    conn.close()
++    data = []
++    for row in reversed(rows):
++        data.append({'timestamp': row[0], 'temperature': row[1], 'humidity': row[2], 'pressure': row[3]})
++    return jsonify(data)
++@app.route('/update_thresholds', methods=['POST'])
++def update_thresholds():
++    global thresholds
++    data = request.get_json()
++    for key in thresholds:
++        if key in data:
++            thresholds[key] = float(data[key])
++    return jsonify({'status': 'success', 'thresholds': thresholds})
++if __name__ == '__main__':
++    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+diff --git a/sensor_read.py b/sensor_read.py
+new file mode 100644
+index 0000000..dcd1545
+--- /dev/null
++++ b/sensor_read.py
+@@ -0,0 +1,21 @@
++import sqlite3
++import datetime
++import time
++from sense_emu import SenseHat
++sense = SenseHat()
++conn = sqlite3.connect('environment.db', check_same_thread=False)
++cursor = conn.cursor()
++cursor.execute("CREATE TABLE IF NOT EXISTS readings (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, temperature REAL, humidity REAL, pressure REAL)")
++conn.commit()
++def read_sensor():
++    temperature = sense.get_temperature()
++    humidity = sense.get_humidity()
++    pressure = sense.get_pressure()
++    return temperature, humidity, pressure
++def log_reading():
++    temperature, humidity, pressure = read_sensor()
++    cursor.execute("INSERT INTO readings (temperature, humidity, pressure) VALUES (?, ?, ?)", (temperature, humidity, pressure))
++    conn.commit()
++while True:
++    log_reading()
++    time.sleep(5)
+diff --git a/static/css/style.css b/static/css/style.css
+new file mode 100644
+index 0000000..7dcda4a
+--- /dev/null
++++ b/static/css/style.css
+@@ -0,0 +1,28 @@
++body {
++font-family: Arial, sans-serif;
++background-color: #f5f5f5;
++margin: 0;
++padding: 0;
++}
++header {
++background-color: #007bff;
++color: #fff;
++padding: 20px;
++text-align: center;
++}
++.container {
++width: 90%;
++max-width: 1200px;
++margin: 20px auto;
++background-color: #fff;
++padding: 20px;
++border-radius: 8px;
++box-shadow: 0 0 10px rgba(0,0,0,0.1);
++}
++section {
++margin-bottom: 20px;
++}
++.warning {
++color: red;
++font-weight: bold;
++}
+diff --git a/static/js/app.js b/static/js/app.js
+new file mode 100644
+index 0000000..b6d446d
+--- /dev/null
++++ b/static/js/app.js
+@@ -0,0 +1,86 @@
++var socket = io();
++socket.on('sensor_update', function(data) {
++document.getElementById('timestamp').innerText = data.timestamp;
++document.getElementById('temperature').innerText = parseFloat(data.temperature).toFixed(2);
++document.getElementById('humidity').innerText = parseFloat(data.humidity).toFixed(2);
++document.getElementById('pressure').innerText = parseFloat(data.pressure).toFixed(2);
++document.getElementById('temp-warning').innerText = (data.warnings && data.warnings.temperature) ? "Warning!" : "";
++document.getElementById('hum-warning').innerText = (data.warnings && data.warnings.humidity) ? "Warning!" : "";
++document.getElementById('pres-warning').innerText = (data.warnings && data.warnings.pressure) ? "Warning!" : "";
++});
++document.getElementById('thresholdForm').addEventListener('submit', function(e) {
++e.preventDefault();
++var formData = new FormData(e.target);
++var thresholds = {};
++formData.forEach(function(value, key) {
++thresholds[key] = value;
++});
++fetch('/update_thresholds', {
++method: 'POST',
++headers: { 'Content-Type': 'application/json' },
++body: JSON.stringify(thresholds)
++})
++.then(response => response.json())
++.then(data => alert("Thresholds updated successfully!"))
++.catch(error => console.error('Error updating thresholds:', error));
++});
++var tempChart = null;
++function fetchHistoricalDataAndUpdateChart() {
++fetch('/history')
++.then(response => response.json())
++.then(data => {
++if (data.length < 2) {
++console.warn("Not enough data to render chart.");
++return;
++}
++let timestamps = data.map(record => new Date(record.timestamp + "Z"));
++let temperatures = data.map(record => record.temperature);
++let xValues = timestamps.map(date => date.getTime());
++let n = xValues.length;
++let sumX = xValues.reduce((acc, val) => acc + val, 0);
++let sumY = temperatures.reduce((acc, val) => acc + val, 0);
++let sumXY = 0, sumXX = 0;
++for (let i = 0; i < n; i++) {
++sumXY += xValues[i] * temperatures[i];
++sumXX += xValues[i] * xValues[i];
++}
++let m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
++let b = (sumY - m * sumX) / n;
++let regressionData = xValues.map(x => m * x + b);
++let labels = timestamps.map(date => date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
++var ctx = document.getElementById('tempChart').getContext('2d');
++if (!tempChart) {
++tempChart = new Chart(ctx, {
++type: 'line',
++data: {
++labels: labels,
++datasets: [
++{ label: 'Temperature (°C)', data: temperatures, borderColor: 'blue', backgroundColor: 'rgba(0,0,255,0.1)', fill: false, tension: 0.1 },
++{ label: 'Trend Line', data: regressionData, borderColor: 'red', backgroundColor: 'rgba(255,0,0,0.1)', fill: false, borderDash: [5,5], tension: 0.1 }
++]
++},
++options: { responsive: true, scales: { x: { type: 'time', time: { unit: 'minute', displayFormats: { minute: 'HH:mm' }}, title: { display: true, text: 'Time' }}, y: { beginAtZero: false, title: { display: true, text: 'Temperature (°C)' }}}}
++});
++} else {
++tempChart.data.labels = labels;
++tempChart.data.datasets[0].data = temperatures;
++tempChart.data.datasets[1].data = regressionData;
++tempChart.update();
++}
++let threshold = parseFloat(document.querySelector('input[name="temperature_max"]').value);
++let lastTemp = temperatures[temperatures.length - 1];
++let predictedDate = null;
++if (m > 0 && lastTemp < threshold) {
++let predictedNumeric = (threshold - b) / m;
++predictedDate = new Date(predictedNumeric);
++}
++if (predictedDate) {
++document.getElementById('prediction').innerText = "Predicted time to exceed " + threshold + "°C: " + predictedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
++} else {
++document.getElementById('prediction').innerText = "";
++}
++})
++.catch(error => console.error("Error fetching historical data:", error));
++}
++fetchHistoricalDataAndUpdateChart();
++setInterval(fetchHistoricalDataAndUpdateChart, 10000);
+diff --git a/templates/index.html b/templates/index.html
+new file mode 100644
+index 0000000..511cd6e
+--- /dev/null
++++ b/templates/index.html
+@@ -0,0 +1,43 @@
++<!DOCTYPE html>
++<html>
++<head>
++<meta charset="UTF-8">
++<title>Smart Environment Monitoring System</title>
++<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='css/style.css') }}">
++<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
++<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
++<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
++</head>
++<body>
++<header>
++<h1>Smart Environment Monitoring System</h1>
++</header>
++<div class="container">
++<section id="sensor-data">
++<h2>Current Sensor Data</h2>
++<p>Timestamp: <span id="timestamp"></span></p>
++<p>Temperature: <span id="temperature"></span> °C <span id="temp-warning" class="warning"></span></p>
++<p>Humidity: <span id="humidity"></span> % <span id="hum-warning" class="warning"></span></p>
++<p>Pressure: <span id="pressure"></span> hPa <span id="pres-warning" class="warning"></span></p>
++</section>
++<section id="thresholds">
++<h2>Threshold Settings</h2>
++<form id="thresholdForm">
++<label>Temperature Min: <input type="number" step="0.1" name="temperature_min" value="{{ thresholds['temperature_min'] }}"></label><br>
++<label>Temperature Max: <input type="number" step="0.1" name="temperature_max" value="{{ thresholds['temperature_max'] }}"></label><br>
++<label>Humidity Min: <input type="number" step="0.1" name="humidity_min" value="{{ thresholds['humidity_min'] }}"></label><br>
++<label>Humidity Max: <input type="number" step="0.1" name="humidity_max" value="{{ thresholds['humidity_max'] }}"></label><br>
++<label>Pressure Min: <input type="number" step="0.1" name="pressure_min" value="{{ thresholds['pressure_min'] }}"></label><br>
++<label>Pressure Max: <input type="number" step="0.1" name="pressure_max" value="{{ thresholds['pressure_max'] }}"></label><br>
++<button type="submit">Update Thresholds</button>
++</form>
++</section>
++<section id="chart-container">
++<h2>Historical Temperature Data</h2>
++<canvas id="tempChart" width="400" height="200"></canvas>
++<p id="prediction"></p>
++</section>
++</div>
++<script src="{{ url_for('static', filename='js/app.js') }}"></script>
++</body>
++</html>
